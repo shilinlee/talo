@@ -1,0 +1,6 @@
+# Copy to ~/.talo/envs.yaml and adjust for your machine.
+devbox:
+  host: devbox.example
+  remote_base: /home/devuser
+  container: dev-container
+  shell: bash

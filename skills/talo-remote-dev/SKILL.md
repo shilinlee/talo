@@ -81,24 +81,6 @@ $remote_base/.talo/workspaces/$project
 Talo assumes SSH key-based access is already configured. If the remote host currently requires a password, tell the
 user to install their public key first; do not store or handle passwords in Talo.
 
-Linux/macOS when `ssh-copy-id` exists:
-
-```bash
-ssh-copy-id -i ~/.ssh/id_ed25519.pub devuser@devbox.example
-```
-
-Portable OpenSSH fallback:
-
-```bash
-cat ~/.ssh/id_ed25519.pub | ssh devuser@devbox.example 'mkdir -p ~/.ssh && chmod 700 ~/.ssh && cat >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys'
-```
-
-Windows PowerShell:
-
-```powershell
-Get-Content $env:USERPROFILE\.ssh\id_ed25519.pub | ssh devuser@devbox.example "mkdir -p ~/.ssh && chmod 700 ~/.ssh && cat >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys"
-```
-
 Verify with either the direct target or an SSH config alias:
 
 ```bash
@@ -135,8 +117,7 @@ Prefer `sync` plus `docker` for normal build/test loops. Use `exec`, `pull`, and
 ## Platform Notes
 
 - Linux/macOS use the rsync sync backend.
-- Native Windows uses Paramiko SFTP incremental sync and does not require local rsync, bash, Git Bash, MSYS2, or
-  WSL for `sync`, `exec`, `docker`, or `ps`.
+- Native Windows uses Paramiko SFTP sync and does not require local rsync, bash, Git Bash, MSYS2, or WSL.
 - Sync backend selection is automatic by platform; do not add a config field for it.
 - Native Windows still needs Python, Paramiko, and a local OpenSSH `ssh` executable. Installing Talo on Windows pulls
   Paramiko via the Windows-only dependency marker; source installs can also use `python -m pip install '.[windows]'`.

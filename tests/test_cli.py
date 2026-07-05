@@ -321,6 +321,13 @@ class EnvCommandTests(unittest.TestCase):
             self.assertIn("  Port 2222\n", ssh_config)
             self.assertIn(f"  IdentityFile {identity}\n", ssh_config)
             self.assertIn("  IdentitiesOnly yes\n", ssh_config)
+            self.assertIn("  BatchMode yes\n", ssh_config)
+            self.assertIn("  ControlMaster auto\n", ssh_config)
+            self.assertIn("  ControlPath ~/.ssh/talo-%C\n", ssh_config)
+            self.assertIn("  ControlPersist 10m\n", ssh_config)
+            self.assertIn("  ServerAliveInterval 30\n", ssh_config)
+            self.assertIn("  ServerAliveCountMax 3\n", ssh_config)
+            self.assertNotIn("StrictHostKeyChecking", ssh_config)
 
     def test_env_add_fails_when_identity_file_is_missing_and_writes_nothing(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

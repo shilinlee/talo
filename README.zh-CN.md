@@ -44,10 +44,7 @@ python3 -m pip install --index-url https://test.pypi.org/simple/ --no-deps talo=
 ```text
 ~/.talo/
   envs.yaml
-  scripts/          # 可选的用户覆盖脚本
 ```
-
-当 `~/.talo/scripts/<name>.sh` 不存在时，Talo 会使用包内置脚本作为 fallback。
 
 ## 配置
 
@@ -71,27 +68,8 @@ $remote_base/.talo/workspaces/$project
 
 ## SSH 前置条件
 
-Talo 默认要求远端 SSH 免密登录已经可用，然后再执行远端命令。如果远端目前只能用密码登录，请先把本地公钥安装到远端用户的 `~/.ssh/authorized_keys`。
-
-Linux/macOS 且有 `ssh-copy-id` 时：
-
-```bash
-ssh-copy-id -i ~/.ssh/id_ed25519.pub devuser@devbox.example
-```
-
-通用 OpenSSH fallback：
-
-```bash
-cat ~/.ssh/id_ed25519.pub | ssh devuser@devbox.example 'mkdir -p ~/.ssh && chmod 700 ~/.ssh && cat >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys'
-```
-
-Windows PowerShell：
-
-```powershell
-Get-Content $env:USERPROFILE\.ssh\id_ed25519.pub | ssh devuser@devbox.example "mkdir -p ~/.ssh && chmod 700 ~/.ssh && cat >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys"
-```
-
-然后验证 SSH 是否可用：
+Talo 默认要求远端 SSH 免密登录已经可用。如果远端目前只能用密码登录，请先把本地公钥安装到远端用户的
+`~/.ssh/authorized_keys`。然后验证 SSH 是否可用：
 
 ```bash
 ssh devuser@devbox.example 'echo talo-ssh-ok'
@@ -106,9 +84,8 @@ ssh devbox 'echo talo-ssh-ok'
 ## 平台说明
 
 - **Linux/macOS：** `taloctl <env> sync` 使用包内置 rsync 脚本。
-- **原生 Windows：** `taloctl <env> sync` 使用 Paramiko SFTP 做增量文件更新，不要求 rsync、bash、Git Bash、MSYS2 或 WSL。
+- **原生 Windows：** `taloctl <env> sync` 使用 Paramiko SFTP，不要求 rsync、bash、Git Bash、MSYS2 或 WSL。
 - 同步 backend 完全按平台自动选择，不需要配置字段。
-- `exec`、`docker` 和 `ps` 会直接调用本地 `ssh` 可执行文件，不要求本地 bash。
 - `pull` 和 `push` 仍使用 legacy rsync 脚本，只作为低层 escape hatch，不是常规构建 / 测试循环。
 
 ## 命令
@@ -146,25 +123,7 @@ taloctl env add devbox \
 
 ## Agent 使用方式
 
-Talo 仓库提供了 Hermes skill，用来教 agent 安全地使用远端开发循环：本地文件是权威源，远端 workspace 是可丢弃镜像，远端执行通过 `taloctl` 完成。
-
-安装英文 skill：
-
-```bash
-hermes skills install https://raw.githubusercontent.com/shilinlee/talo/main/skills/talo-remote-dev/SKILL.md
-```
-
-仓库里也提供了中文参考译本：
-
-```text
-skills/talo-remote-dev/SKILL.zh-CN.md
-```
-
-然后在 Hermes 会话中加载：
-
-```text
-/skill talo-remote-dev
-```
+Agent 工作流说明在 `skills/talo-remote-dev/SKILL.md`；中文参考译本在 `skills/talo-remote-dev/SKILL.zh-CN.md`。
 
 ## 安全模型
 

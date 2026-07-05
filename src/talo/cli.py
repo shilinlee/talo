@@ -406,6 +406,16 @@ def ssh_config_block(options: EnvCommandOptions) -> str:
     if options.identity_file:
         lines.append(f"  IdentityFile {Path(options.identity_file).expanduser()}")
         lines.append("  IdentitiesOnly yes")
+    lines.extend(
+        [
+            "  BatchMode yes",
+            "  ControlMaster auto",
+            "  ControlPath ~/.ssh/talo-%C",
+            "  ControlPersist 10m",
+            "  ServerAliveInterval 30",
+            "  ServerAliveCountMax 3",
+        ]
+    )
     return "\n".join(lines) + "\n"
 
 

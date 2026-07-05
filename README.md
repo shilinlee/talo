@@ -47,10 +47,7 @@ User configuration lives outside the source tree:
 ```text
 ~/.talo/
   envs.yaml
-  scripts/          # optional user-overridden scripts
 ```
-
-The packaged scripts are used as fallback when `~/.talo/scripts/<name>.sh` is absent.
 
 ## Config
 
@@ -74,28 +71,8 @@ $remote_base/.talo/workspaces/$project
 
 ## SSH prerequisite
 
-Talo expects SSH key-based login to work before it runs remote commands. If your remote host only accepts a password
-today, first install your public key into the remote user's `~/.ssh/authorized_keys`.
-
-Linux/macOS, when `ssh-copy-id` is available:
-
-```bash
-ssh-copy-id -i ~/.ssh/id_ed25519.pub devuser@devbox.example
-```
-
-Portable OpenSSH fallback:
-
-```bash
-cat ~/.ssh/id_ed25519.pub | ssh devuser@devbox.example 'mkdir -p ~/.ssh && chmod 700 ~/.ssh && cat >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys'
-```
-
-Windows PowerShell:
-
-```powershell
-Get-Content $env:USERPROFILE\.ssh\id_ed25519.pub | ssh devuser@devbox.example "mkdir -p ~/.ssh && chmod 700 ~/.ssh && cat >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys"
-```
-
-Then verify non-interactive SSH access:
+Talo expects SSH key-based login to work before it runs remote commands. If your remote host only accepts a password,
+install your public key into the remote user's `~/.ssh/authorized_keys` first. Then verify non-interactive access:
 
 ```bash
 ssh devuser@devbox.example 'echo talo-ssh-ok'
@@ -110,10 +87,8 @@ ssh devbox 'echo talo-ssh-ok'
 ## Platform notes
 
 - **Linux/macOS:** `taloctl <env> sync` uses the packaged rsync script.
-- **Native Windows:** `taloctl <env> sync` uses Paramiko SFTP and performs incremental file updates without requiring
-  rsync, bash, Git Bash, MSYS2, or WSL.
+- **Native Windows:** `taloctl <env> sync` uses Paramiko SFTP and does not require rsync, bash, Git Bash, MSYS2, or WSL.
 - Sync backend selection is automatic by platform; no config field is needed.
-- `exec`, `docker`, and `ps` call the local `ssh` executable directly and do not require local bash.
 - `pull` and `push` still use the legacy rsync scripts and are escape hatches, not the normal build/test loop.
 
 ## Commands
@@ -153,26 +128,8 @@ keys to the server.
 
 ## Agent usage
 
-Talo ships a Hermes skill that teaches agents the safe remote-development loop: local files are authoritative,
-remote workspaces are disposable mirrors, and remote execution happens through `taloctl`.
-
-Install the English skill:
-
-```bash
-hermes skills install https://raw.githubusercontent.com/shilinlee/talo/main/skills/talo-remote-dev/SKILL.md
-```
-
-A Chinese reference translation is also available in the repository:
-
-```text
-skills/talo-remote-dev/SKILL.zh-CN.md
-```
-
-Then load it in a Hermes session:
-
-```text
-/skill talo-remote-dev
-```
+Agent workflow guidance lives in `skills/talo-remote-dev/SKILL.md`; a Chinese reference is available at
+`skills/talo-remote-dev/SKILL.zh-CN.md`.
 
 ## Safety model
 

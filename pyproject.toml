@@ -29,7 +29,12 @@ classifiers = [
     "Topic :: Utilities",
 ]
 
-dependencies = []
+dependencies = [
+    "paramiko>=3.0; platform_system == 'Windows'",
+]
+
+[project.optional-dependencies]
+windows = ["paramiko>=3.0"]
 
 [project.scripts]
 taloctl = "talo.cli:main_entry"

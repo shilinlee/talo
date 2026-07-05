@@ -76,12 +76,47 @@ $remote_base/.talo/workspaces/$project
 
 `project` is the basename of the local git root, or the current directory when outside git.
 
+## SSH Prerequisite
+
+Talo assumes SSH key-based access is already configured. If the remote host currently requires a password, tell the
+user to install their public key first; do not store or handle passwords in Talo.
+
+Linux/macOS when `ssh-copy-id` exists:
+
+```bash
+ssh-copy-id -i ~/.ssh/id_ed25519.pub devuser@devbox.example
+```
+
+Portable OpenSSH fallback:
+
+```bash
+cat ~/.ssh/id_ed25519.pub | ssh devuser@devbox.example 'mkdir -p ~/.ssh && chmod 700 ~/.ssh && cat >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys'
+```
+
+Windows PowerShell:
+
+```powershell
+Get-Content $env:USERPROFILE\.ssh\id_ed25519.pub | ssh devuser@devbox.example "mkdir -p ~/.ssh && chmod 700 ~/.ssh && cat >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys"
+```
+
+Verify with either the direct target or an SSH config alias:
+
+```bash
+ssh devuser@devbox.example 'echo talo-ssh-ok'
+ssh devbox 'echo talo-ssh-ok'
+```
+
 ## Command Surface
 
 Use only this public command surface unless the user says their Talo version has changed:
 
 ```bash
 taloctl list
+taloctl version
+taloctl env list
+taloctl env show <name>
+taloctl env add <name> --host <host-or-ip-or-alias> --remote-base <path> [--container <name>] [--yes]
+taloctl env update <name> [--host <host-or-ip-or-alias>] [--remote-base <path>] [--container <name>] [--yes]
 taloctl <env> config
 taloctl <env> sync
 taloctl <env> docker "<command-in-project-workspace>"
@@ -91,7 +126,22 @@ taloctl <env> pull <remote-path> <local-path>
 taloctl <env> push <local-path> <remote-path>
 ```
 
+For agent-driven setup, prefer `taloctl env add` / `taloctl env update` over editing YAML by hand. `--host` accepts only
+a host name, IP address, or SSH alias; never pass `user@host`. If writing SSH config, pass `--user` separately and only
+pass `--identity-file` when that private key already exists.
+
 Prefer `sync` plus `docker` for normal build/test loops. Use `exec`, `pull`, and `push` only as escape hatches.
+
+## Platform Notes
+
+- Linux/macOS use the rsync sync backend.
+- Native Windows uses Paramiko SFTP incremental sync and does not require local rsync, bash, Git Bash, MSYS2, or
+  WSL for `sync`, `exec`, `docker`, or `ps`.
+- Sync backend selection is automatic by platform; do not add a config field for it.
+- Native Windows still needs Python, Paramiko, and a local OpenSSH `ssh` executable. Installing Talo on Windows pulls
+  Paramiko via the Windows-only dependency marker; source installs can also use `python -m pip install '.[windows]'`.
+- `pull` and `push` still use legacy rsync scripts; avoid them in the normal Windows build/test loop until they are
+  migrated too.
 
 ## Standard Workflow
 

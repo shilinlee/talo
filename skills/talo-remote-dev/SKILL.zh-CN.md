@@ -75,12 +75,46 @@ $remote_base/.talo/workspaces/$project
 
 `project` 是本地 git 根目录的 basename；如果当前目录不在 git 仓库里，则使用当前目录名。
 
+## SSH 前置条件
+
+Talo 假设 SSH key-based 登录已经配置好。如果远端目前需要密码登录，先让用户把公钥安装到远端；不要在 Talo 中保存或处理密码。
+
+Linux/macOS 且有 `ssh-copy-id` 时：
+
+```bash
+ssh-copy-id -i ~/.ssh/id_ed25519.pub devuser@devbox.example
+```
+
+通用 OpenSSH fallback：
+
+```bash
+cat ~/.ssh/id_ed25519.pub | ssh devuser@devbox.example 'mkdir -p ~/.ssh && chmod 700 ~/.ssh && cat >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys'
+```
+
+Windows PowerShell：
+
+```powershell
+Get-Content $env:USERPROFILE\.ssh\id_ed25519.pub | ssh devuser@devbox.example "mkdir -p ~/.ssh && chmod 700 ~/.ssh && cat >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys"
+```
+
+用直接目标或 SSH config alias 验证：
+
+```bash
+ssh devuser@devbox.example 'echo talo-ssh-ok'
+ssh devbox 'echo talo-ssh-ok'
+```
+
 ## 命令表面
 
 除非用户明确说明自己的 Talo 版本已经变化，否则只使用这些公开命令：
 
 ```bash
 taloctl list
+taloctl version
+taloctl env list
+taloctl env show <name>
+taloctl env add <name> --host <host-or-ip-or-alias> --remote-base <path> [--container <name>] [--yes]
+taloctl env update <name> [--host <host-or-ip-or-alias>] [--remote-base <path>] [--container <name>] [--yes]
 taloctl <env> config
 taloctl <env> sync
 taloctl <env> docker "<项目 workspace 内执行的命令>"
@@ -90,7 +124,17 @@ taloctl <env> pull <remote-path> <local-path>
 taloctl <env> push <local-path> <remote-path>
 ```
 
+Agent 自动配置时优先使用 `taloctl env add` / `taloctl env update`，不要手写 YAML。`--host` 只接受主机名、IP 或 SSH alias；不要传 `user@host`。如果要写 SSH config，单独传 `--user`；只有私钥文件已经存在时才传 `--identity-file`。
+
 常规构建 / 测试循环优先使用 `sync` + `docker`。`exec`、`pull`、`push` 只作为低层 escape hatch 使用。
+
+## 平台说明
+
+- Linux/macOS 使用 rsync 同步 backend。
+- 原生 Windows 使用 Paramiko SFTP 增量同步；`sync`、`exec`、`docker`、`ps` 不要求本地安装 rsync、bash、Git Bash、MSYS2 或 WSL。
+- 同步 backend 完全按平台自动选择，不要为它添加配置字段。
+- 原生 Windows 仍需要 Python、Paramiko 和本地 OpenSSH `ssh` 可执行文件。Windows 安装 Talo 会通过平台依赖拉取 Paramiko；源码安装也可以用 `python -m pip install '.[windows]'`。
+- `pull` 和 `push` 仍使用 legacy rsync 脚本；在迁移前，Windows 常规构建 / 测试循环不要依赖它们。
 
 ## 标准流程
 

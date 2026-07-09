@@ -50,6 +50,21 @@ class RuntimeEnvTests(unittest.TestCase):
         self.assertEqual(env["PROJECT"], "project")
         self.assertEqual(env["REMOTE_WORKSPACE"], "/home/alice/.talo/workspaces/project")
 
+    def test_git_runtime_env_uses_branch_workspace(self) -> None:
+        root = Path("/tmp/project")
+        cfg = {"host": "server", "remote_base": "/home/alice", "shell": "bash", "container": "dev"}
+        with mock.patch("talo.cli.is_git_repo", return_value=True), mock.patch(
+            "talo.cli.current_branch", return_value="feature/foo bar"
+        ):
+            env = cli.runtime_env("lab", cfg, root=root)
+
+        self.assertEqual(env["PROJECT"], "project")
+        self.assertEqual(env["REMOTE_WORKSPACE"], "/home/alice/workspace/worktress/project/feature-foo-bar")
+
+    def test_safe_branch_name(self) -> None:
+        self.assertEqual(cli.safe_branch_name("feature/foo bar"), "feature-foo-bar")
+        self.assertEqual(cli.safe_branch_name("..."), "branch")
+
     def test_command_string_quotes_multiple_parts(self) -> None:
         self.assertEqual(cli.command_string(["python", "-m", "pytest"]), "python -m pytest")
 
@@ -64,12 +79,25 @@ class FakeSftpAttr:
 
 class FakeSftp:
     def __init__(self) -> None:
-        self.dirs = {"/remote/project", "/remote/project/keep"}
+        self.dirs = {
+            "/remote/project",
+            "/remote/project/keep",
+            "/remote/project/.git",
+            "/remote/project/.talo",
+            "/remote/project/node_modules",
+            "/remote/project/node_modules/pkg",
+            "/remote/project/.venv",
+            "/remote/project/.venv/bin",
+        }
         self.files = {
             "/remote/project/same.txt": (b"same", 1_700_000_000),
             "/remote/project/changed.txt": (b"old", 1),
             "/remote/project/stale.txt": (b"stale", 1),
             "/remote/project/keep/nested.txt": (b"nested", 1_700_000_001),
+            "/remote/project/.git/config": (b"git", 1),
+            "/remote/project/.talo/state": (b"state", 1),
+            "/remote/project/node_modules/pkg/index.js": (b"pkg", 1),
+            "/remote/project/.venv/bin/python": (b"python", 1),
         }
         self.operations: list[tuple[str, str]] = []
         self.closed = False
@@ -153,6 +181,55 @@ class FakeSshClient:
 
 
 class RemoteActionTests(unittest.TestCase):
+    def test_bootstrap_clones_when_remote_workspace_is_missing(self) -> None:
+        env = {"HOST": "devbox", "LOCAL_ROOT": "/tmp/project", "REMOTE_WORKSPACE": "/remote/workspace"}
+        with mock.patch("talo.cli.is_git_repo", return_value=True), mock.patch(
+            "talo.cli.current_branch", return_value="main"
+        ), mock.patch("talo.cli.origin_url", return_value="git@example.com:org/repo.git"), mock.patch(
+            "talo.cli.remote_dir_is_empty_or_missing", return_value=True
+        ), mock.patch("talo.cli.ssh_run", return_value=0) as fake_ssh_run, mock.patch(
+            "talo.cli.run_sync_overlay", return_value=0
+        ) as fake_overlay:
+            code = cli.handle_remote_action("bootstrap", [], env)
+
+        self.assertEqual(code, 0)
+        self.assertEqual(fake_ssh_run.call_count, 1)
+        remote_cmd = fake_ssh_run.call_args.args[1]
+        self.assertIn("mkdir -p /remote", remote_cmd)
+        self.assertIn("git clone --branch main git@example.com:org/repo.git /remote/workspace", remote_cmd)
+        fake_overlay.assert_called_once_with(env)
+
+    def test_bootstrap_rejects_non_empty_remote_workspace(self) -> None:
+        env = {"HOST": "devbox", "LOCAL_ROOT": "/tmp/project", "REMOTE_WORKSPACE": "/remote/workspace"}
+        with mock.patch("talo.cli.is_git_repo", return_value=True), mock.patch(
+            "talo.cli.current_branch", return_value="main"
+        ), mock.patch("talo.cli.origin_url", return_value="git@example.com:org/repo.git"), mock.patch(
+            "talo.cli.remote_dir_is_empty_or_missing", return_value=False
+        ):
+            with self.assertRaises(cli.TaloError):
+                cli.handle_bootstrap(env)
+
+    def test_sync_checks_remote_git_before_overlay(self) -> None:
+        env = {"HOST": "devbox", "LOCAL_ROOT": "/tmp/project", "REMOTE_WORKSPACE": "/remote/workspace"}
+        with mock.patch("talo.cli.is_git_repo", return_value=True), mock.patch(
+            "talo.cli.current_branch", return_value="main"
+        ), mock.patch("talo.cli.remote_git_ready") as fake_ready, mock.patch(
+            "talo.cli.run_sync_overlay", return_value=0
+        ) as fake_overlay:
+            code = cli.handle_sync(env)
+
+        self.assertEqual(code, 0)
+        fake_ready.assert_called_once_with(env, "main")
+        fake_overlay.assert_called_once_with(env)
+
+    def test_sync_rejects_remote_branch_mismatch(self) -> None:
+        env = {"HOST": "devbox", "REMOTE_WORKSPACE": "/remote/workspace"}
+        with mock.patch("talo.cli.remote_path_is_dir", side_effect=[True, True]), mock.patch(
+            "talo.cli.remote_current_branch", return_value="other"
+        ):
+            with self.assertRaises(cli.TaloError):
+                cli.remote_git_ready(env, "main")
+
     def test_exec_uses_ssh_without_local_bash_script(self) -> None:
         with mock.patch("subprocess.run") as fake_run:
             fake_run.return_value.returncode = 0
@@ -209,6 +286,14 @@ class RemoteActionTests(unittest.TestCase):
         self.assertNotIn(("put", "/remote/project/same.txt"), sftp.operations)
         self.assertNotIn(("put", "/remote/project/.git/config"), sftp.operations)
         self.assertIn(("remove", "/remote/project/stale.txt"), sftp.operations)
+        self.assertNotIn(("remove", "/remote/project/.git/config"), sftp.operations)
+        self.assertNotIn(("remove", "/remote/project/.talo/state"), sftp.operations)
+        self.assertNotIn(("remove", "/remote/project/node_modules/pkg/index.js"), sftp.operations)
+        self.assertNotIn(("remove", "/remote/project/.venv/bin/python"), sftp.operations)
+        self.assertNotIn(("rmdir", "/remote/project/.git"), sftp.operations)
+        self.assertNotIn(("rmdir", "/remote/project/.talo"), sftp.operations)
+        self.assertNotIn(("rmdir", "/remote/project/node_modules"), sftp.operations)
+        self.assertNotIn(("rmdir", "/remote/project/.venv"), sftp.operations)
         self.assertNotIn(("rmdir", "/remote/project/keep"), sftp.operations)
         self.assertEqual(sftp.files["/remote/project/changed.txt"][0], b"new")
 

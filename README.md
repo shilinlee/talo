@@ -9,8 +9,9 @@ disposable execution backend:
 
 ```text
 local project/worktree
-  -> taloctl <env> sync
-remote workspace mirror
+  -> taloctl <env> bootstrap   # first time for a git branch
+remote git workspace
+  -> taloctl <env> sync        # later incremental overlay
   -> taloctl <env> docker "<test/build command>"
 stdout/stderr
   -> local AI/agent analysis
@@ -61,13 +62,18 @@ devbox:
   shell: bash
 ```
 
-`remote_base` is the remote base directory. Talo derives the project workspace as:
+`remote_base` is the remote base directory. For git repositories, Talo derives the branch workspace as:
+
+```text
+$remote_base/workspace/worktress/$project/$branch
+```
+
+`project` is the basename of the local git root. `branch` is the current git branch with path-unsafe characters replaced.
+For directories outside git, Talo keeps the legacy workspace layout:
 
 ```text
 $remote_base/.talo/workspaces/$project
 ```
-
-`project` is the basename of the local git root, or the current working directory when outside git.
 
 ## SSH prerequisite
 
@@ -86,8 +92,8 @@ ssh devbox 'echo talo-ssh-ok'
 
 ## Platform notes
 
-- **Linux/macOS:** `taloctl <env> sync` uses the packaged rsync script.
-- **Native Windows:** `taloctl <env> sync` uses Paramiko SFTP and does not require rsync, bash, Git Bash, MSYS2, or WSL.
+- **Linux/macOS:** `taloctl <env> sync` uses the packaged rsync script for the overlay step.
+- **Native Windows:** `taloctl <env> sync` uses Paramiko SFTP for the overlay step and does not require rsync, bash, Git Bash, MSYS2, or WSL.
 - Sync backend selection is automatic by platform; no config field is needed.
 - `pull` and `push` still use the legacy rsync scripts and are escape hatches, not the normal build/test loop.
 
@@ -101,6 +107,7 @@ taloctl env show <name>
 taloctl env add <name> --host <host-or-ip-or-alias> --remote-base <path> [--container <name>] [--yes]
 taloctl env update <name> [--host <host-or-ip-or-alias>] [--remote-base <path>] [--container <name>] [--yes]
 taloctl <env> config
+taloctl <env> bootstrap
 taloctl <env> sync
 taloctl <env> docker "<command-in-project-workspace>"
 taloctl <env> exec "<remote-host-command>"
@@ -126,14 +133,26 @@ taloctl env add devbox \
 When `--identity-file` is provided, the private key file must already exist. Talo will not generate keys or copy public
 keys to the server.
 
-## Agent usage
+## Git branch bootstrap
 
-Agent workflow guidance lives in `skills/talo-remote-dev/SKILL.md`; a Chinese reference is available at
-`skills/talo-remote-dev/SKILL.zh-CN.md`.
+For git repositories, run `bootstrap` once before the first `sync` for a branch:
+
+```bash
+taloctl devbox bootstrap
+```
+
+`bootstrap` requires the remote host to be able to clone the local `origin` URL. It only works when the target remote
+workspace does not exist or is empty; if that directory already contains data, Talo exits instead of deleting it.
+After the clone succeeds, Talo runs one overlay sync so local uncommitted changes appear as remote working-tree diffs.
+Later `sync` calls only check that the remote workspace exists, contains `.git/`, and is on the same branch, then run the
+overlay sync.
+
+Agent workflow guidance lives in `skills/talo-remote-dev/SKILL.md`.
 
 ## Safety model
 
 - Local files are authoritative.
-- Remote workspaces are disposable mirrors.
-- `.git/`, `.talo/`, legacy `.envhub/`, virtualenvs, `node_modules/`, and Python caches are excluded from sync.
+- Remote workspaces are disposable mirrors, even when they contain a git clone.
+- Local `.git/` is never copied directly. Git workspaces are created remotely by `bootstrap`.
+- `.git/`, `.talo/`, legacy `.envhub/`, virtualenvs, `node_modules/`, and Python caches are protected from overlay sync.
 - Remote commands return real stdout/stderr and exit codes for local analysis.

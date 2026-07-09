@@ -20,6 +20,23 @@ from talo import __version__
 TALO_HOME_ENV = "TALO_HOME"
 DEFAULT_TALO_HOME = Path.home() / ".talo"
 NONE_VALUES = {"", "none", "null", "无", "无 docker", "无docker"}
+PROTECTED_SYNC_DIRS = {
+    ".git",
+    ".talo",
+    ".envhub",
+    ".talo-runs",
+    ".envhub-runs",
+    "node_modules",
+    ".venv",
+    "__pycache__",
+}
+
+
+@dataclass
+class RemoteCommandResult:
+    returncode: int
+    stdout: str
+    stderr: str
 
 
 class TaloError(RuntimeError):
@@ -49,11 +66,13 @@ def usage_text() -> str:
   taloctl <env> ps
   taloctl <env> pull <remote-path> <local-path>
   taloctl <env> push <local-path> <remote-path>
+  taloctl <env> bootstrap
   taloctl <env> sync
 
 Examples:
   taloctl version
   taloctl devbox config
+  taloctl devbox bootstrap
   taloctl devbox sync
   taloctl devbox docker "npm test"
   taloctl devbox exec "hostname && pwd"
@@ -143,6 +162,51 @@ def local_root() -> Path:
     return Path(proc.stdout.strip()).resolve() if proc.stdout.strip() else Path.cwd().resolve()
 
 
+def git_output(root: Path, args: List[str]) -> Optional[str]:
+    try:
+        proc = subprocess.run(
+            ["git", "-C", str(root), *args],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            check=True,
+        )
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        return None
+    value = proc.stdout.strip()
+    return value or None
+
+
+def is_git_repo(root: Path) -> bool:
+    return git_output(root, ["rev-parse", "--is-inside-work-tree"]) == "true"
+
+
+def current_branch(root: Path) -> str:
+    branch = git_output(root, ["branch", "--show-current"])
+    if not branch:
+        raise TaloError("bootstrap/sync requires a named git branch; detached HEAD is not supported in this version")
+    return branch
+
+
+def origin_url(root: Path) -> str:
+    url = git_output(root, ["remote", "get-url", "origin"])
+    if not url:
+        raise TaloError("bootstrap requires git remote 'origin'")
+    return url
+
+
+def safe_branch_name(branch: str) -> str:
+    safe = re.sub(r"[^A-Za-z0-9._-]+", "-", branch).strip(".-_")
+    return safe or "branch"
+
+
+def remote_workspace_path(remote_base: str, project: str, root: Path) -> str:
+    base = remote_base.rstrip("/")
+    if is_git_repo(root):
+        return f"{base}/workspace/worktress/{project}/{safe_branch_name(current_branch(root))}"
+    return f"{base}/.talo/workspaces/{project}"
+
+
 def runtime_env(env_name: str, cfg: Mapping[str, str], root: Optional[Path] = None) -> Dict[str, str]:
     resolved_root = (root or local_root()).resolve()
     project = resolved_root.name
@@ -161,7 +225,7 @@ def runtime_values(
         "REMOTE_BASE": remote_base,
         "LOCAL_ROOT": str(root),
         "PROJECT": project,
-        "REMOTE_WORKSPACE": f"{remote_base}/.talo/workspaces/{project}",
+        "REMOTE_WORKSPACE": remote_workspace_path(remote_base, project, root),
         "CONTAINER": cfg.get("container", ""),
         "ENV_SHELL": cfg.get("shell", "bash") or "bash",
     }
@@ -437,6 +501,55 @@ def ssh_run(host: str, remote_cmd: str) -> int:
     return subprocess.run(["ssh", host, remote_cmd]).returncode
 
 
+def ssh_capture(host: str, remote_cmd: str) -> RemoteCommandResult:
+    proc = subprocess.run(
+        ["ssh", host, remote_cmd],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    return RemoteCommandResult(proc.returncode, proc.stdout, proc.stderr)
+
+
+def remote_test_command(test_expr: str) -> str:
+    return f"test {test_expr}"
+
+
+def remote_path_exists(env: Mapping[str, str], path: str) -> bool:
+    return ssh_capture(env["HOST"], remote_test_command(f"-e {quote_remote(path)}")).returncode == 0
+
+
+def remote_path_is_dir(env: Mapping[str, str], path: str) -> bool:
+    return ssh_capture(env["HOST"], remote_test_command(f"-d {quote_remote(path)}")).returncode == 0
+
+
+def remote_dir_is_empty_or_missing(env: Mapping[str, str], path: str) -> bool:
+    quoted = quote_remote(path)
+    command = f"if [ -e {quoted} ]; then [ -d {quoted} ] && [ -z \"$(ls -A {quoted})\" ]; else exit 0; fi"
+    return ssh_capture(env["HOST"], command).returncode == 0
+
+
+def remote_current_branch(env: Mapping[str, str]) -> str:
+    workspace = quote_remote(env["REMOTE_WORKSPACE"])
+    result = ssh_capture(env["HOST"], f"git -C {workspace} branch --show-current")
+    if result.returncode != 0:
+        raise TaloError("remote workspace is not a usable git repo; run: taloctl <env> bootstrap")
+    return result.stdout.strip()
+
+
+def remote_git_ready(env: Mapping[str, str], branch: str) -> None:
+    workspace = env["REMOTE_WORKSPACE"]
+    if not remote_path_is_dir(env, workspace):
+        raise TaloError("remote workspace is not bootstrapped; run: taloctl <env> bootstrap")
+    if not remote_path_is_dir(env, posixpath.join(workspace, ".git")):
+        raise TaloError("remote workspace has no .git directory; run: taloctl <env> bootstrap")
+    remote_branch = remote_current_branch(env)
+    if remote_branch != branch:
+        raise TaloError(
+            f"remote branch mismatch: local={branch}, remote={remote_branch or '<unknown>'}; run: taloctl <env> bootstrap"
+        )
+
+
 def quote_remote(value: str) -> str:
     return shlex.quote(value)
 
@@ -565,9 +678,12 @@ def rel_join(parent: str, name: str) -> str:
     return name if not parent else f"{parent}/{name}"
 
 
+def protected_sync_path(rel: str) -> bool:
+    return any(part in PROTECTED_SYNC_DIRS for part in rel.split("/"))
+
+
 def should_exclude(rel: str, is_dir: bool, gitignore_patterns: List[str]) -> bool:
-    parts = rel.split("/")
-    if any(part in {".git", ".talo", ".envhub", ".talo-runs", ".envhub-runs", "node_modules", ".venv", "__pycache__"} for part in parts):
+    if protected_sync_path(rel):
         return True
     rel_for_dir = f"{rel}/" if is_dir else rel
     for pattern in gitignore_patterns:
@@ -617,7 +733,7 @@ def remote_file_matches(sftp, remote_path: str, local_stat: os.stat_result) -> b
 def delete_stale_remote_entries(sftp, remote_root: str, local_files: Set[str]) -> None:
     for remote_path in sorted(list_remote_paths(sftp, remote_root), key=lambda p: p.count("/"), reverse=True):
         rel = posixpath.relpath(remote_path, remote_root)
-        if rel == "." or rel in local_files:
+        if rel == "." or rel in local_files or protected_sync_path(rel):
             continue
         try:
             attrs = sftp.stat(remote_path)
@@ -727,18 +843,47 @@ def handle_remote_action(action: str, rest: List[str], env: Dict[str, str]) -> i
         return handle_transfer(rest, env, "pull_file.sh", "remote", "local")
     if action == "push":
         return handle_transfer(rest, env, "push_file.sh", "local", "remote")
+    if action == "bootstrap":
+        return handle_bootstrap(env)
     if action == "sync":
         return handle_sync(env)
     raise TaloError(f"unknown action: {action}")
 
 
-def handle_sync(env: Dict[str, str]) -> int:
+def run_sync_overlay(env: Dict[str, str]) -> int:
     backend = sync_backend()
     if backend == "sftp":
         return sync_windows_sftp(env)
     if backend == "rsync":
         return run_script("sync_code.sh", env)
     raise TaloError(f"unknown sync backend: {backend}")
+
+
+def handle_bootstrap(env: Dict[str, str]) -> int:
+    root = Path(env["LOCAL_ROOT"]).resolve()
+    if not is_git_repo(root):
+        raise TaloError("bootstrap requires a git repository")
+    branch = current_branch(root)
+    remote_url = origin_url(root)
+    workspace = env["REMOTE_WORKSPACE"]
+    if not remote_dir_is_empty_or_missing(env, workspace):
+        raise TaloError(f"remote workspace is not empty: {workspace}")
+    parent = posixpath.dirname(workspace.rstrip("/"))
+    command = (
+        f"mkdir -p {quote_remote(parent)} && "
+        f"git clone --branch {quote_remote(branch)} {quote_remote(remote_url)} {quote_remote(workspace)}"
+    )
+    code = ssh_run(env["HOST"], command)
+    if code != 0:
+        return code
+    return run_sync_overlay(env)
+
+
+def handle_sync(env: Dict[str, str]) -> int:
+    root = Path(env["LOCAL_ROOT"]).resolve()
+    if is_git_repo(root):
+        remote_git_ready(env, current_branch(root))
+    return run_sync_overlay(env)
 
 
 def handle_docker(rest: List[str], env: Dict[str, str]) -> int:

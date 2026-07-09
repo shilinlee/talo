@@ -1,57 +1,57 @@
 ---
-name: talo-remote-dev
-description: Use when a local project should be synced to a configured Talo remote execution backend, then built, tested, or inspected through taloctl while keeping local files as the source of truth.
+name: talo-remote-dev-zh-cn
+description: 当本地项目需要同步到已配置的 Talo 远端执行后端，并通过 taloctl 在远端构建、测试或检查，同时保持本地文件为唯一可信源时使用。
 version: 0.1.0
 author: Talo contributors
 license: MIT
 metadata:
   hermes:
-    tags: [talo, taloctl, remote-development, ssh, docker, rsync, local-ai]
-    related_skills: [systematic-debugging, test-driven-development]
+    tags: [talo, taloctl, remote-development, ssh, docker, rsync, local-ai, chinese]
+    related_skills: [talo-remote-dev]
 ---
 
-# Talo Remote Development
+# Talo 远端开发工作流
 
-## Overview
+## 概览
 
-Talo is an agent-native remote development controller. Use `taloctl` when the local machine should remain the
-source of truth, while a remote SSH host and Docker container provide a disposable execution backend.
+Talo 是面向 AI agent 的远端开发控制器。当本地机器应该保持为源码可信源，而远端 SSH 主机和 Docker
+容器只作为一次性执行后端时，使用 `taloctl`。
 
-The core loop is:
+核心循环是：
 
 ```text
-local project/worktree
-  -> taloctl <env> sync
-remote workspace mirror
-  -> taloctl <env> docker "<test/build command>"
+本地项目 / worktree
+  -> taloctl <env> bootstrap   # git 分支首次搭建
+远端 git workspace 镜像
+  -> taloctl <env> sync        # 后续增量 overlay
+  -> taloctl <env> docker "<测试或构建命令>"
 stdout/stderr
-  -> local agent analysis
+  -> 本地 agent 分析
 ```
 
-Do not treat the remote workspace as the real repository. It is a mirror that can be deleted and recreated.
+远端 workspace 仍然是可以删除、重建、覆盖的镜像。git 仓库场景下，`bootstrap` 会让远端自己 clone 当前分支，方便在远端使用 `git diff` / `git status` 检查 overlay 后的工作区状态。
 
-## When to Use
+## 什么时候使用
 
-Use this skill when:
+在以下情况使用这个 skill：
 
-- The user asks to run local project tests/builds on a configured remote machine.
-- The task mentions Talo, `taloctl`, `.talo`, remote Docker execution, or rsyncing code to a backend.
-- Local AI credentials, git state, and source edits should stay local, but heavy execution should happen remotely.
-- You need to inspect remote containers, run a command in a project workspace, or verify accelerator visibility.
+- 用户希望把本地项目的测试或构建放到已配置的远端机器上运行。
+- 任务提到 Talo、`taloctl`、`.talo`、远端 Docker 执行，或把代码 rsync 到执行后端。
+- AI 凭据、git 状态和源码编辑应该留在本地，但重型执行应该发生在远端。
+- 需要查看远端容器、在项目 workspace 里执行命令，或验证加速卡 / NPU / GPU 可见性。
 
-Do not use this skill for production deployment, bidirectional sync, or editing source files directly on the remote
-workspace.
+不要把它用于生产部署、双向同步，或直接在远端 workspace 修改源码。
 
-## Configuration Model
+## 配置模型
 
-Runtime configuration lives outside the source tree:
+运行时配置放在源码树之外：
 
 ```text
 ~/.talo/envs.yaml
-~/.talo/scripts/        # optional user-overridden scripts
+~/.talo/scripts/        # 可选的用户覆盖脚本
 ```
 
-Public examples must use placeholders only:
+公开示例只能使用通用占位符：
 
 ```yaml
 devbox:
@@ -61,36 +61,39 @@ devbox:
   shell: bash
 ```
 
-Important fields:
+字段含义：
 
-- `host`: SSH host or alias.
-- `remote_base`: base directory on the remote host.
-- `container`: Docker container used for project commands.
-- `shell`: shell used inside the container, usually `bash`.
+- `host`：SSH 主机名或别名。
+- `remote_base`：远端主机上的基础目录。
+- `container`：执行项目命令的 Docker 容器。
+- `shell`：容器内使用的 shell，通常是 `bash`。
 
-Talo derives the remote workspace from the local project name:
+Talo 会从本地项目名推导远端 workspace。git 仓库使用当前分支隔离目录：
+
+```text
+$remote_base/workspace/worktress/$project/$branch
+```
+
+`project` 是本地 git 根目录的 basename，`branch` 是安全化后的当前分支名。如果当前目录不在 git 仓库里，则继续使用 legacy 路径：
 
 ```text
 $remote_base/.talo/workspaces/$project
 ```
 
-`project` is the basename of the local git root, or the current directory when outside git.
+## SSH 前置条件
 
-## SSH Prerequisite
+Talo 假设 SSH key-based 登录已经配置好。如果远端目前需要密码登录，先让用户把公钥安装到远端；不要在 Talo 中保存或处理密码。
 
-Talo assumes SSH key-based access is already configured. If the remote host currently requires a password, tell the
-user to install their public key first; do not store or handle passwords in Talo.
-
-Verify with either the direct target or an SSH config alias:
+用直接目标或 SSH config alias 验证：
 
 ```bash
 ssh devuser@devbox.example 'echo talo-ssh-ok'
 ssh devbox 'echo talo-ssh-ok'
 ```
 
-## Command Surface
+## 命令表面
 
-Use only this public command surface unless the user says their Talo version has changed:
+除非用户明确说明自己的 Talo 版本已经变化，否则只使用这些公开命令：
 
 ```bash
 taloctl list
@@ -100,63 +103,75 @@ taloctl env show <name>
 taloctl env add <name> --host <host-or-ip-or-alias> --remote-base <path> [--container <name>] [--yes]
 taloctl env update <name> [--host <host-or-ip-or-alias>] [--remote-base <path>] [--container <name>] [--yes]
 taloctl <env> config
+taloctl <env> bootstrap
 taloctl <env> sync
-taloctl <env> docker "<command-in-project-workspace>"
-taloctl <env> exec "<remote-host-command>"
+taloctl <env> docker "<项目 workspace 内执行的命令>"
+taloctl <env> exec "<远端主机命令>"
 taloctl <env> ps
 taloctl <env> pull <remote-path> <local-path>
 taloctl <env> push <local-path> <remote-path>
 ```
 
-For agent-driven setup, prefer `taloctl env add` / `taloctl env update` over editing YAML by hand. `--host` accepts only
-a host name, IP address, or SSH alias; never pass `user@host`. If writing SSH config, pass `--user` separately and only
-pass `--identity-file` when that private key already exists.
+Agent 自动配置时优先使用 `taloctl env add` / `taloctl env update`，不要手写 YAML。`--host` 只接受主机名、IP 或 SSH alias；不要传 `user@host`。如果要写 SSH config，单独传 `--user`；只有私钥文件已经存在时才传 `--identity-file`。
 
-Prefer `sync` plus `docker` for normal build/test loops. Use `exec`, `pull`, and `push` only as escape hatches.
+常规构建 / 测试循环优先使用 `bootstrap`（首次）+ `sync`（后续）+ `docker`。`exec`、`pull`、`push` 只作为低层 escape hatch 使用。
 
-## Platform Notes
+## 平台说明
 
-- Linux/macOS use the rsync sync backend.
-- Native Windows uses Paramiko SFTP sync and does not require local rsync, bash, Git Bash, MSYS2, or WSL.
-- Sync backend selection is automatic by platform; do not add a config field for it.
-- Native Windows still needs Python, Paramiko, and a local OpenSSH `ssh` executable. Installing Talo on Windows pulls
-  Paramiko via the Windows-only dependency marker; source installs can also use `python -m pip install '.[windows]'`.
-- `pull` and `push` still use legacy rsync scripts; avoid them in the normal Windows build/test loop until they are
-  migrated too.
+- Linux/macOS 使用 rsync 同步 backend。
+- 原生 Windows 使用 Paramiko SFTP 同步，不要求本地安装 rsync、bash、Git Bash、MSYS2 或 WSL。
+- 同步 backend 完全按平台自动选择，不要为它添加配置字段。
+- 原生 Windows 仍需要 Python、Paramiko 和本地 OpenSSH `ssh` 可执行文件。Windows 安装 Talo 会通过平台依赖拉取 Paramiko；源码安装也可以用 `python -m pip install '.[windows]'`。
+- `pull` 和 `push` 仍使用 legacy rsync 脚本；在迁移前，Windows 常规构建 / 测试循环不要依赖它们。
 
-## Standard Workflow
+## 标准流程
 
-### 1. Confirm the target environment and workspace
+### 1. 确认目标环境和 workspace
 
-Run from the intended local repo or project directory:
+在目标本地仓库或项目目录下执行：
 
 ```bash
 taloctl list
 taloctl <env> config
 ```
 
-Completion criteria:
+完成标准：
 
-- The expected environment appears in `taloctl list`.
-- `taloctl <env> config` shows the intended local root, project name, container, and remote workspace.
+- `taloctl list` 能看到预期环境。
+- `taloctl <env> config` 显示预期的本地根目录、项目名、容器和远端 workspace。
 
-### 2. Sync local files to the remote mirror
+### 2. 首次 bootstrap 远端分支 workspace
 
-After local edits, sync before remote execution:
+git 仓库第一次使用某个分支时，先执行：
+
+```bash
+taloctl <env> bootstrap
+```
+
+完成标准：
+
+- 命令以 0 退出。
+- 远端 workspace 位于 `$remote_base/workspace/worktress/<project>/<branch>` 之下。
+- 远端 workspace 包含 `.git/`。
+- 如果目标目录已经有任何数据，bootstrap 会报错退出，不会自动删除。
+
+### 3. 同步本地文件到远端镜像
+
+bootstrap 完成后，本地改动、远端执行前先同步：
 
 ```bash
 taloctl <env> sync
 ```
 
-Completion criteria:
+完成标准：
 
-- Command exits with code 0.
-- Output indicates sync completed.
-- The remote workspace path is under `$remote_base/.talo/workspaces/<project>`.
+- 命令以 0 退出。
+- 输出表明同步完成。
+- `sync` 只做简单校验和增量 overlay，不负责首次 clone。
 
-### 3. Run the requested command in the container
+### 4. 在容器中运行请求的命令
 
-Use `docker` for project build/test commands:
+项目构建 / 测试命令使用 `docker`：
 
 ```bash
 taloctl <env> docker "python -m pytest"
@@ -164,40 +179,40 @@ taloctl <env> docker "npm test"
 taloctl <env> docker "npu-smi info"
 ```
 
-Completion criteria:
+完成标准：
 
-- The real command ran inside the configured container.
-- stdout/stderr and the exit code are available locally for analysis.
+- 真实命令在配置的容器中运行。
+- stdout/stderr 和退出码能在本地用于分析。
 
-### 4. Analyze locally, fix locally, repeat
+### 5. 本地分析、本地修复、循环验证
 
-If remote output shows a failure, edit local files, run `taloctl <env> sync`, then rerun the smallest relevant remote
-command. Keep the remote workspace disposable.
+如果远端输出显示失败，在本地修改文件，执行 `taloctl <env> sync`，然后重新运行最小相关远端命令。
+远端 workspace 始终视为可丢弃。
 
-## Safety Rules
+## 安全规则
 
-1. Local files are authoritative.
-2. Remote workspaces are mirrors, not source repositories.
-3. Do not rely on remote `.git`; sync intentionally excludes git metadata.
-4. Always sync after local edits and before remote tests.
-5. Do not place real host aliases, usernames, home paths, container names, tokens, or credentials in public examples.
-6. Avoid new commands until actual usage shows a clear need.
+1. 本地文件是权威源。
+2. 远端 workspace 是镜像，即使包含由 `bootstrap` 创建的 `.git/`，也不是权威源码。
+3. 不要直接复制本地 `.git/`；远端 `.git/` 只能来自远端 clone。
+4. 本地修改后、远端测试前必须同步。
+5. 公开示例里不要放真实 host alias、用户名、home 路径、容器名、token 或凭据。
+6. 只有真实使用显示出明确需求时，才新增命令。
 
-## Common Pitfalls
+## 常见坑
 
-1. **Wrong current directory.** `project` is derived from the local git root or cwd. Check `taloctl <env> config` before
-   syncing from an unfamiliar shell.
-2. **Stale remote code.** If you edited locally but did not run `sync`, remote tests may use old files.
-3. **Confusing `exec` and `docker`.** `exec` runs on the remote host; `docker` runs in the configured container.
-4. **Treating remote files as durable.** The next sync can overwrite them.
-5. **Leaking local names.** Public docs should use `devbox`, `devbox.example`, `/home/devuser`, and `dev-container`.
+1. **当前目录错误。** `project` 从本地 git 根目录或 cwd 推导。不熟悉 shell 状态时，先看
+   `taloctl <env> config`。
+2. **远端代码过期。** 本地改了但没有 `sync`，远端测试可能跑旧文件。
+3. **混淆 `exec` 和 `docker`。** `exec` 在远端主机运行；`docker` 在配置的容器内运行。
+4. **把远端文件当成持久状态。** 下一次同步可能覆盖远端文件。
+5. **泄露本地名称。** 公开文档使用 `devbox`、`devbox.example`、`/home/devuser`、`dev-container`。
 
-## Verification Checklist
+## 验证清单
 
-Before reporting success:
+报告成功前确认：
 
-- [ ] `taloctl <env> config` was checked when path correctness mattered.
-- [ ] `taloctl <env> sync` ran after local changes.
-- [ ] `taloctl <env> docker "..."` ran the actual requested command when container execution was needed.
-- [ ] Results are based on real stdout/stderr and exit codes.
-- [ ] Any public docs or examples use generic placeholders only.
+- [ ] 路径正确性重要时，已经检查 `taloctl <env> config`。
+- [ ] 本地修改后已经执行 `taloctl <env> sync`。
+- [ ] 需要容器执行时，已经运行真实的 `taloctl <env> docker "..."` 命令。
+- [ ] 结论基于真实 stdout/stderr 和退出码。
+- [ ] 公开文档或示例只使用通用占位符。
